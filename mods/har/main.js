@@ -403,13 +403,13 @@ export default class Har extends View {
     const c = div().px(5).py(0.5).flex_none().rounded(4).border_1().border_color(color + "66").text_size(10).text_color(color).child(text);
     if (!opts.url) return c;
     return c.id(opts.id ?? `chip-${text}`).cursor_pointer().hover((s) => s.bg(color + "22")).tooltip(opts.url)
-      .on_click((_e, cx) => { cx.stop_propagation(); H.openUrl(opts.url); });
+      .on_click((_e, cx) => { cx.stop_propagation(); (opts.system ? H.openSystemUrl : H.openUrl)(opts.url); });
   }
 
-  prChip(pr, t, id) {
+  prChip(pr, t, id, opts = {}) {
     if (!pr) return null;
     const c = pr.state === "MERGED" ? t.ansi5 ?? t.accent : pr.state === "CLOSED" ? t.dim : pr.isDraft ? t.muted : t.ansi2;
-    return this.chip(`PR #${pr.number} ${pr.state === "OPEN" ? (pr.isDraft ? "draft" : "open") : pr.state.toLowerCase()}`, c, t, { url: pr.url, id });
+    return this.chip(`PR #${pr.number} ${pr.state === "OPEN" ? (pr.isDraft ? "draft" : "open") : pr.state.toLowerCase()}`, c, t, { url: pr.url, id, ...opts });
   }
 
   section(title, t, right) {
@@ -1167,7 +1167,7 @@ export default class Har extends View {
     const vc = verdictColor(t, f.verdict);
     const gitBlock = v_flex().px(14).gap(6)
       .child(h_flex().gap(6).items_center().flex_wrap()
-        .when(Boolean(f.pr), (e) => e.child(this.prChip(f.pr, t, "d-pr")))
+        .when(Boolean(f.pr), (e) => e.child(this.prChip(f.pr, t, "d-pr", { system: true })))
         .when(!f.pr, (e) => e.child(this.chip(snap.prs ? "no PR" : "PRs unknown (gh)", t.dim, t)))
         .child(this.chip(`↑${s.ahead ?? "?"} ahead · ↓${s.behind ?? "?"} behind`, t.muted, t))
         .child(this.chip(f.unpushed > 0 ? `${f.unpushed} unpushed` : f.pushed ? "pushed" : (s.ahead ?? 0) > 0 ? "not pushed" : "nothing to push", f.unpushed > 0 ? t.blocked : t.muted, t))
