@@ -463,7 +463,7 @@ export default class Har extends View {
       const r = by.get(name);
       const state = !r ? "none" : r.state ?? (r.skipped ? "skipped" : r.pass ? "pass" : "fail");
       const c = state === "none" ? t.border : statusColor(t, state);
-      return div().flex_1().h_full().rounded(2).bg(c).when(state === "running", (e) => e.opacity(0.6));
+      return div().flex_1().h_full().rounded(2).bg(c).when(state === "running", (e) => e.loop("opacity", { from: 0.3, to: 1, period: 900 }));
     }));
   }
 
@@ -1222,11 +1222,18 @@ export default class Har extends View {
         : state === "skipped" ? this.icon("skip", c, 12) : state === "running" ? div().w(12).text_size(11).text_color(c).frames(SPIN, 90)
         : div().size(6).mx(3).rounded(3).border_1().border_color(t.dim);
       const w = r?.ms ? Math.max(2, Math.round((r.ms / maxMs) * 100)) : 0;
-      return h_flex().h(22).gap(8).items_center()
-        .child(div().w(14).text_size(10).text_color(t.dim).child(String(i + 1)))
+      const running = state === "running";
+      // a finished stage's bar grows to its share; the running stage's track breathes until its result lands
+      const fill = div().id(`pb-${s.id}-${name}`).h_full().rounded(3).w(`${w}%`).bg(c + "aa")
+        .transition("width", { duration: 600, easing: "ease-out" });
+      return h_flex().h(22).gap(8).items_center().rounded(5)
+        .when(running, (e) => e.bg(t.working + "14"))
+        .child(div().w(14).text_size(10).text_color(running ? t.working : t.dim).child(String(i + 1)))
         .child(h_flex().w(14).justify_center().child(mark))
-        .child(div().w(110).flex_none().truncate().text_color(state === "pending" || state === "unrun" ? t.muted : t.foreground).child(name))
-        .child(div().flex_1().h(6).rounded(3).bg(t.raised).child(div().h_full().rounded(3).w(`${w}%`).bg(c + "aa")))
+        .child(div().w(110).flex_none().truncate().text_color(state === "pending" || state === "unrun" ? t.muted : running ? t.working : t.foreground)
+          .when(running, (e) => e.loop("opacity", { from: 0.55, to: 1, period: 1200 })).child(name))
+        .child(div().relative().flex_1().h(6).rounded(3).bg(t.raised).child(fill)
+          .when(running, (e) => e.child(div().absolute().inset_0().rounded(3).bg(t.working).loop("opacity", { from: 0.12, to: 0.6, period: 1000 }))))
         .child(div().w(52).text_right().text_size(11).text_color(t.dim).child(r?.ms != null ? H.dur(r.ms) : state === "unrun" ? "full only" : ""));
     }));
 
