@@ -89,7 +89,7 @@ function trimSlot(s) {
     baseCommit: s.baseCommit ? s.baseCommit.slice(0, 7) : null, since: s.sessionCreatedAt ?? null,
     dirty: s.dirty ?? null, ahead: s.ahead ?? null, behind: s.behind ?? null, stale: s.stale ?? false,
     usage: s.harnessUsage ?? null, mode: s.mode ?? null,
-    blockers: (s.readiness?.blockers ?? []).filter((b) => b.code !== "slot_occupied").map((b) => b.message),
+    blockers: (s.readiness?.blockers ?? []).filter((b) => b.code !== "slot_occupied" && b.code !== "slot_dirty").map((b) => b.message),
     warnings: s.readiness?.warnings ?? [],
   };
 }
