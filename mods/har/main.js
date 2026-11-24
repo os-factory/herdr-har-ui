@@ -21,6 +21,15 @@ const mono = () => settings().font_family ?? "JetBrains Mono";   // the terminal
 const ROW = 24, LANE = 12, LANE_PAD = 6;   // the worktree graph: row height, lane width, left padding
 const CLEAR = "#00000000";
 const NOT_AGENT = /browser/i;   // programs herdr lists next to agents that can't take a prompt
+// Mission Control's sections in their default order; dragging a section's title saves another (Settings key sectionOrder).
+const SECTIONS = {
+  overview: ["usage", "pipeline", "lines", "work"],
+  slot: ["pipeline", "usage", "readiness", "git", "hints", "worktree", "previews", "agents", "convs", "runs"],
+};
+function sectionOrder(view) {
+  const saved = (H.setting("sectionOrder") ?? {})[view] ?? [], all = SECTIONS[view];
+  return [...saved.filter((k) => all.includes(k)), ...all.filter((k) => !saved.includes(k))];
+}
 
 // The HAR panel is the "har-panel" child of the right panel's stack, next to Files and Changes
 // (the tab row's Mission Control | Files | Changes | Browser buttons, mods/har-tabs).
@@ -407,6 +416,38 @@ export default class Har extends View {
     return h_flex().px(14).pt(14).pb(6).items_center().gap(6)
       .child(div().text_size(10.5).font_semibold().text_color(t.dim).child(title.toUpperCase()))
       .child(div().flex_1()).when(Boolean(right), (e) => e.child(right));
+  }
+
+  /** Lays out a view's sections ({key: [header, ...body]}, empty when absent) in the saved order. Drag a
+   *  section by its title onto another to move it there. */
+  arrange(view, blocks, t) {
+    const order = sectionOrder(view);
+    const shown = order.filter((k) => blocks[k]?.length);
+    const drag = this.drag?.view === view ? this.drag : null;
+    const from = drag ? shown.indexOf(drag.key) : -1;
+    return shown.map((k, i) => {
+      const [head, ...body] = blocks[k];
+      const target = drag && drag.over === k && drag.key !== k;
+      return v_flex().id(`sec-${view}-${k}`).relative()
+        .when(Boolean(drag), (e) => e.cursor_grabbing())
+        .when(drag?.key === k, (e) => e.opacity(0.5))
+        .when(target, (e) => e.child(div().absolute().left(14).right(14).h(2).bg(t.accent).when(from < i, (l) => l.bottom(0)).when(from > i, (l) => l.top(0))))
+        .on_mouse_move((_e, cx) => {
+          if (this.drag?.view === view && this.drag.over !== k) { this.drag.over = k; cx.notify(); }
+        })
+        .on_mouse_up("left", (_e, cx) => {
+          const d = this.drag;
+          this.drag = null;
+          if (d?.view === view && d.key !== k) {
+            const next = order.filter((x) => x !== d.key);
+            next.splice(next.indexOf(k) + (shown.indexOf(d.key) < i ? 1 : 0), 0, d.key);
+            H.setSetting("sectionOrder", { ...(H.setting("sectionOrder") ?? {}), [view]: next });
+          }
+          cx.notify();
+        })
+        .child(div().when(!drag, (e) => e.cursor_grab()).on_mouse_down("left", () => { this.drag = { view, key: k, over: k }; }).child(head))
+        .children(body);
+    });
   }
 
   scroller(id, body, t) {
@@ -932,6 +973,7 @@ export default class Har extends View {
     const sp = H.spacing();
     const shell = (children) => v_flex().id("har-detail").size_full().min_h(0).rounded(sp.radius).overflow_hidden().bg(t.background)
       .when(!sp.divider, (e) => e.border_1().border_color(t.border)).text_color(t.foreground).text_size(12.5)
+      .on_mouse_up("left", (_e, cx) => { if (this.drag) { this.drag = null; cx.notify(); } })
       .child(this.scroller("har-detail-scroll", v_flex().pb(14).children(children), t));
     if (!snap) return shell([div().p(14).text_color(t.dim).child("Waiting for HAR data…")]);
     if (!slot) return shell(this.overview(repo, snap, t, cx));
@@ -981,13 +1023,15 @@ export default class Har extends View {
       })(),
     ];
 
+    const blocks = { usage: [], pipeline: [], lines: [], work: [] };
+
     // usage
-    out.push(this.section("Usage · OTel", t, snap.usage?.error ? div().text_size(10.5).text_color(t.blocked).child(snap.usage.error) : null));
+    blocks.usage.push(this.section("Usage · OTel", t, snap.usage?.error ? div().text_size(10.5).text_color(t.blocked).child(snap.usage.error) : null));
     if (!snap.usage?.error) {
-      out.push(this.usageBlock(ru.all, t, { label: "Repository total" }));
+      blocks.usage.push(this.usageBlock(ru.all, t, { label: "Repository total" }));
       const perSlot = active.map((s) => ({ s, u: H.slotUsage(snap, s) }));
       const max = Math.max(0.0001, ...perSlot.map((x) => x.u.cost), ru.unattributed.cost);
-      out.push(v_flex().px(14).pt(10).gap(3)
+      blocks.usage.push(v_flex().px(14).pt(10).gap(3)
         .children(perSlot.map(({ s, u }) => h_flex().id(`us-${s.id}`).gap(8).items_center().text_size(11).cursor_pointer().on_click(() => H.selectSlot(s.id))
           .child(div().w(46).flex_none().text_color(t.muted).child(`Slot ${s.id}`))
           .child(div().flex_1().h(6).rounded(3).bg(t.raised).child(div().h_full().rounded(3).bg(t.working + "bb").w(`${u.cost ? Math.max(2, Math.round((u.cost / max) * 100)) : 0}%`)))
@@ -1004,10 +1048,10 @@ export default class Har extends View {
     const verifies = snap.runs.filter((r) => r.kind === "verify" && r.stages).slice(0, 16).reverse();
     const names = [...snap.stages, ...new Set(verifies.flatMap((r) => r.stages.map((x) => x.name)).filter((n) => !snap.stages.includes(n)))];
     const passN = verifies.filter((r) => r.status === "pass").length;
-    out.push(this.section("Pipeline health", t, verifies.length ? div().text_size(10.5).text_color(passN / verifies.length >= 0.8 ? t.ansi2 : t.blocked)
+    blocks.pipeline.push(this.section("Pipeline health", t, verifies.length ? div().text_size(10.5).text_color(passN / verifies.length >= 0.8 ? t.ansi2 : t.blocked)
       .child(`${Math.round((passN / verifies.length) * 100)}% of last ${verifies.length} verifies pass`) : null));
-    if (!verifies.length) out.push(div().px(14).text_size(11.5).text_color(t.dim).child("No verify runs recorded."));
-    else out.push(v_flex().px(14).gap(2).children(names.map((name) => {
+    if (!verifies.length) blocks.pipeline.push(div().px(14).text_size(11.5).text_color(t.dim).child("No verify runs recorded."));
+    else blocks.pipeline.push(v_flex().px(14).gap(2).children(names.map((name) => {
       const cells = verifies.map((r) => r.stages.find((x) => x.name === name) ?? null);
       const ran = cells.filter(Boolean).filter((c) => !c.skipped);
       const fails = ran.filter((c) => !c.pass).length;
@@ -1026,8 +1070,8 @@ export default class Har extends View {
 
     // factory lines
     if (snap.lines?.length) {
-      out.push(this.section(`Factory lines · ${snap.lines.length}`, t));
-      out.push(v_flex().px(14).gap(10).children(snap.lines.map((l) => {
+      blocks.lines.push(this.section(`Factory lines · ${snap.lines.length}`, t));
+      blocks.lines.push(v_flex().px(14).gap(10).children(snap.lines.map((l) => {
         const st = l.stations ?? [];
         const next = st.find((s) => !s.green);
         const green = st.filter((s) => s.green).length;
@@ -1050,9 +1094,9 @@ export default class Har extends View {
 
     // work units
     const units = snap.workUnits ?? [];
-    out.push(this.section(`Work units · ${units.length}`, t));
-    if (!units.length) out.push(div().px(14).text_size(11.5).text_color(t.dim).child("No work units bound yet (har env launch --work-id …)."));
-    out.push(v_flex().px(8).gap(1).children(units.slice(0, 30).map((w) => {
+    blocks.work.push(this.section(`Work units · ${units.length}`, t));
+    if (!units.length) blocks.work.push(div().px(14).text_size(11.5).text_color(t.dim).child("No work units bound yet (har env launch --work-id …)."));
+    blocks.work.push(v_flex().px(8).gap(1).children(units.slice(0, 30).map((w) => {
       const inSlot = active.find((s) => s.work === w.id);
       const u = H.workUsage(snap, w.id);
       return h_flex().id(`wu-${w.id}`).h(36).px(6).gap(8).items_center().rounded(6).hover((e) => e.bg(t.hover))
@@ -1066,7 +1110,7 @@ export default class Har extends View {
         .child(div().w(50).text_right().text_size(11).text_color(u.sessions ? t.foreground : t.dim).child(u.sessions ? H.money(u.cost) : "—"))
         .child(div().w(52).text_right().text_size(10.5).text_color(t.dim).child(H.ago(w.lastAt)));
     })));
-    return out;
+    return [...out, ...this.arrange("overview", blocks, t)];
   }
 
   slotDetail(repo, snap, s, t, cx) {
@@ -1194,22 +1238,24 @@ export default class Har extends View {
       .child(this.dot(hintColor[h.level] ?? t.dim, 6))
       .child(div().flex_1().min_w(0).text_size(11.5).text_color(hintColor[h.level] ?? t.muted).child(h.text))
       .when(Boolean(h.action), (e) => e.child(this.button(`hint-${i}`, ACTION[h.action], t, () => this.hintAction(h.action, repo, s, h), { h: 22 })))));
-    // Order: what the slot's code does (pipeline), what it costs (usage), whether it can run (readiness),
-    // where it stands (git & PR), then the rest.
+    // Default order (SECTIONS.slot): what the slot's code does (pipeline), what it costs (usage), whether it can
+    // run (readiness), where it stands (git & PR), then the rest.
     return [
       header, actions,
-      this.section("Verification pipeline", t, pipeHead), pipeline,
-      this.section("Usage · OTel", t, snap.usage?.error ? div().text_size(10.5).text_color(t.blocked).child(snap.usage.error) : null),
-      ...(snap.usage?.error ? [] : [this.usageBlock(f.usage, t, { label: "This slot", empty: "No OTel usage attributed to this slot yet." })]),
-      ...(warnings.length ? [this.section("Readiness", t), v_flex().px(14).gap(4).children(warnings.map((w) =>
-        div().text_size(11).text_color(t.blocked).child(`⚠ ${w}`)))] : []),
-      this.section("Git & PR", t), gitBlock,
-      ...(hs.length ? [this.section("Next steps", t), hintBlock] : []),
-      ...this.worktreeBlock(s, t),
-      ...(previews ? [this.section("Previews", t), previews] : []),
-      this.section(`Agents in this slot · ${agents.length}`, t), agentList,
-      ...(convs.length ? [this.section(`Conversations · ${convs.length}`, t), convList] : []),
-      this.section(`Runs · slot ${s.id}`, t), this.runList(repo, runs, t, false),
+      ...this.arrange("slot", {
+        pipeline: [this.section("Verification pipeline", t, pipeHead), pipeline],
+        usage: [this.section("Usage · OTel", t, snap.usage?.error ? div().text_size(10.5).text_color(t.blocked).child(snap.usage.error) : null),
+          ...(snap.usage?.error ? [] : [this.usageBlock(f.usage, t, { label: "This slot", empty: "No OTel usage attributed to this slot yet." })])],
+        readiness: warnings.length ? [this.section("Readiness", t), v_flex().px(14).gap(4).children(warnings.map((w) =>
+          div().text_size(11).text_color(t.blocked).child(`⚠ ${w}`)))] : [],
+        git: [this.section("Git & PR", t), gitBlock],
+        hints: hs.length ? [this.section("Next steps", t), hintBlock] : [],
+        worktree: this.worktreeBlock(s, t),
+        previews: previews ? [this.section("Previews", t), previews] : [],
+        agents: [this.section(`Agents in this slot · ${agents.length}`, t), agentList],
+        convs: convs.length ? [this.section(`Conversations · ${convs.length}`, t), convList] : [],
+        runs: [this.section(`Runs · slot ${s.id}`, t), this.runList(repo, runs, t, false)],
+      }, t),
     ];
   }
 
